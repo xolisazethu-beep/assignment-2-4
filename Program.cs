@@ -45,15 +45,24 @@ builder.Services
     });
 builder.Services.AddAuthorization();
 
-// Dev-only CORS so the Vite frontend (careerhub-web, served on :5173) can call
-// the API from a different origin. Scoped to the local dev origin — not a
-// wide-open AllowAnyOrigin — and only applied below in Development.
-const string DevCorsPolicy = "CareerHubDev";
+// ── PART 2: CORS ─────────────────────────────────────────────────────────────
+// A named policy the SPA frontend uses to call the API cross-origin. We list the
+// explicit origins (local dev + a placeholder prod host) rather than
+// AllowAnyOrigin() because AllowAnyOrigin() + AllowCredentials() is an illegal
+// combination the CORS middleware THROWS on at startup (see README Part 2): the
+// spec forbids the wildcard "*" from being echoed back together with
+// Access-Control-Allow-Credentials: true, since that would let any site on the
+// internet make credentialed requests. Listing origins lets us keep credentials.
+const string CorsPolicy = "CareerHubFrontend";
 builder.Services.AddCors(options =>
-    options.AddPolicy(DevCorsPolicy, policy => policy
-        .WithOrigins("http://localhost:5173")
+    options.AddPolicy(CorsPolicy, policy => policy
+        .WithOrigins("http://localhost:3000", "https://careerhub.example.com")
         .AllowAnyHeader()
-        .AllowAnyMethod()));
+        .AllowAnyMethod()
+        .AllowCredentials()
+        // Custom response headers a browser script can read off the response.
+        // Without this list they are stripped from cross-origin reads.
+        .WithExposedHeaders("X-Total-Count", "ETag", "api-supported-versions", "Retry-After")));
 
 // Validation/constraint failures -> HTTP 400 Problem Details.
 builder.Services.AddExceptionHandler<ValidationExceptionHandler>();
@@ -67,12 +76,16 @@ if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
     app.MapScalarApiReference();   // Scalar UI at /scalar/v1
-    app.UseCors(DevCorsPolicy);    // MUST precede auth: keeps CORS headers on 401s
 }
 
-// Authentication then authorization, in that order, for every request. Placed
-// AFTER UseCors so a rejected (401/403) cross-origin call still carries the CORS
-// headers the browser needs — otherwise it surfaces an opaque CORS error instead.
+// ── PART 2: CORS runs FIRST in the pipeline ──────────────────────────────────
+// UseCors MUST sit before UseAuthentication/UseAuthorization so a rejected
+// (401/403) cross-origin call still carries the Access-Control-* headers the
+// browser needs — otherwise the browser surfaces an opaque CORS error and the
+// SPA can never see the real status.
+app.UseCors(CorsPolicy);
+
+// Authentication then authorization, in that order, for every request.
 app.UseAuthentication();
 app.UseAuthorization();
 

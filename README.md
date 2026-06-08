@@ -1,4 +1,16 @@
-# CareerHub API — Assignment 2.4
+# CareerHub API — Assignment 3.1
+
+**REST API Maturity: CORS, Pagination, Filtering, PATCH, Versioning, ETags & Rate Limiting**
+
+> Assignment 3.1 builds directly on the Assignment 2.4 data layer below. All 3.1
+> work lives at the **API boundary** — the domain entities, database schema and
+> service validation are unchanged. Jump to **[Assignment 3.1](#assignment-31--api-boundary-hardening)**
+> for the new material; the 2.4 reference (query optimisation & PostgreSQL
+> features) follows it.
+
+---
+
+## Assignment 2.4 foundation (unchanged)
 
 **Query Optimisation & PostgreSQL Features**
 
@@ -618,3 +630,55 @@ rather than slow queries.
 5. Add slow-query interceptor with configurable threshold
 6. Add application-statistics endpoint using FromSql with window function
 7. Configure Npgsql connection-pool settings
+
+---
+
+# Assignment 3.1 — API Boundary Hardening
+
+Everything below is new for 3.1. Naming maps to the 2.4 entities: the assignment's
+**PostedAt** is `JobListing.CreatedAt`, its **EmploymentType** is `JobListing.Type`
+(`JobType`), and the listing lifecycle is `JobListing.Status` (`ListingStatus`).
+`Application` has a **composite key** `(JobListingId, ApplicantId)` — there is no
+surrogate id — so the per-application routes address that pair (documented in
+Part 5B / Part 7 below) rather than inventing a column, which the ground rules
+forbid.
+
+## Part 2 — CORS
+
+A single named policy, **`CareerHubFrontend`**, registered in `Program.cs`:
+
+```csharp
+builder.Services.AddCors(options =>
+    options.AddPolicy("CareerHubFrontend", policy => policy
+        .WithOrigins("http://localhost:3000", "https://careerhub.example.com")
+        .AllowAnyHeader()
+        .AllowAnyMethod()
+        .AllowCredentials()
+        .WithExposedHeaders("X-Total-Count", "ETag", "api-supported-versions", "Retry-After")));
+```
+
+`app.UseCors("CareerHubFrontend")` is placed **before** `UseAuthentication()` and
+`UseAuthorization()` so that even a 401/403 response carries the `Access-Control-*`
+headers — otherwise the browser turns a real auth failure into an opaque CORS
+error the SPA can't read.
+
+### Why `AllowAnyOrigin()` + `AllowCredentials()` throws at startup
+
+The CORS specification **forbids** returning the wildcard
+`Access-Control-Allow-Origin: *` together with
+`Access-Control-Allow-Credentials: true`. If any origin could send cookies/Authorization
+headers and have them honoured, a malicious site could ride a logged-in user's
+credentials against the API — so the combination is illegal by design. ASP.NET
+Core enforces this **eagerly**: `CorsPolicyBuilder` throws an
+`InvalidOperationException` ("The CORS protocol does not allow specifying a wildcard
+(any) origin and credentials at the same time") when the policy is built at
+startup, rather than silently producing headers a browser would reject. The fix is
+to enumerate explicit origins (as above), which is exactly what lets us keep
+`AllowCredentials()`.
+
+### Exposed headers
+
+`WithExposedHeaders(...)` whitelists `X-Total-Count` (pagination), `ETag`
+(conditional GETs), `api-supported-versions` (versioning) and `Retry-After`
+(rate limiting) so browser `fetch` code can actually read them off a cross-origin
+response — by default only a handful of "simple" response headers are visible.
