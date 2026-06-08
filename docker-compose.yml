@@ -1,0 +1,22 @@
+services:
+  db:
+    image: postgres:17
+    container_name: careerhub24-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: CareerHub24
+    ports:
+      # Host 5544 -> container 5432, matching appsettings.Development.json.
+      - "5544:5432"
+    volumes:
+      - careerhub24_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d CareerHub24"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  careerhub24_pgdata:
