@@ -56,6 +56,11 @@ dotnet run                                # migrates + seeds ~6 000 listings, se
 # Scalar UI: http://localhost:5080/scalar/v1
 ```
 
+> **Routes are now versioned (Assignment 3.1, Part 6):** every route below is served
+> under **`/api/v1/...`** (e.g. `/api/v1/jobs`). The unversioned paths in this 2.4
+> table are kept for historical context — see the [Endpoint summary](#endpoint-summary)
+> for the current routes.
+
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/jobs` | Active, unexpired job board (compiled query) |
@@ -971,3 +976,123 @@ Ten improvements layered on top of the assignment requirements:
     pagination envelope, filter composition, PATCH partial update, the ETag 304
     round-trip, the rate-limit 429 + Retry-After, and the CORS preflight. See the
     *Testing* section below.
+
+---
+
+# Testing
+
+`CareerHub.Api.Tests` boots the real API in-process with `WebApplicationFactory<Program>`
+and exercises it over HTTP. The host runs migrations + the SA seed on startup, so
+**Postgres must be running first**:
+
+```bash
+docker compose up -d        # Postgres on localhost:5544
+dotnet test                 # runs the integration suite (CareerHub.slnx)
+```
+
+| Test | Proves |
+|---|---|
+| `Board_returns_paged_envelope_…` | `PagedResponse<T>` shape + `X-Total-Count` header + HATEOAS links |
+| `PageSize_is_clamped_to_100` | `pageSize` clamp (Part 3) |
+| `Filters_compose_…` | filter composition — every returned row matches the filter (Part 4) |
+| `Patch_partial_update_…` | PATCH changes only supplied fields; others untouched (Part 5A) |
+| `Patch_with_inverted_salary_range_…` | re-validation → 400 ProblemDetails (Part 5A) |
+| `Etag_round_trip_…` | `If-None-Match` → 304 with no body (Part 7) |
+| `Search_exceeding_30_per_minute_…` | sliding-window 429 + `Retry-After` body (Part 8) |
+| `Cors_preflight_…` | preflight echoes `Access-Control-Allow-Origin`/`-Credentials` (Part 2) |
+
+---
+
+# Endpoint summary
+
+| Verb | Route | Auth | Rate-limit policy |
+|---|---|---|---|
+| GET | `/api/v1/jobs` | anonymous | global (200/60s) |
+| GET | `/api/v1/jobs/filter` | anonymous | global |
+| GET | `/api/v1/jobs/{id}` | anonymous | global (ETag, Cache-Control) |
+| GET | `/api/v1/jobs/company/{companyId}` | anonymous | global |
+| GET | `/api/v1/jobs/search?q=` | anonymous | **search** (sliding 30/60s) |
+| GET | `/api/v1/jobs/stats` | Employer | global |
+| POST | `/api/v1/jobs` | Employer | **post-listing** (10/60min) |
+| PATCH | `/api/v1/jobs/{id}` | Employer | global |
+| POST | `/api/v1/jobs/{jobListingId}/applications` | Applicant | **apply** (5/60min, per-user) |
+| GET | `/api/v1/applications/me` | Applicant | global |
+| GET | `/api/v1/applications/{jobListingId}/{applicantId}` | authenticated | global (ETag) |
+| PATCH | `/api/v1/applications/{jobListingId}/{applicantId}/status` | Employer | global |
+| POST | `/api/v1/auth/register/applicant` · `register/employer` · `login` | anonymous | global |
+| GET | `/api/v1/companies` | anonymous | global |
+| GET | `/health/live` · `/health/ready` | anonymous | — |
+
+---
+
+# Prove it works — curl commands
+
+> Set `BASE=http://localhost:5080` (and a `$TOKEN` from a login response where auth
+> is needed). All paths are `/api/v1/...`.
+
+**Part 2 — CORS preflight** (note the echoed origin + credentials header):
+```bash
+curl -i -X OPTIONS "$BASE/api/v1/jobs" \
+  -H "Origin: http://localhost:3000" \
+  -H "Access-Control-Request-Method: GET"
+# → Access-Control-Allow-Origin: http://localhost:3000
+#   Access-Control-Allow-Credentials: true
+```
+
+**Part 3 — pagination** (envelope + X-Total-Count):
+```bash
+curl -i "$BASE/api/v1/jobs?page=2&pageSize=5"
+# → X-Total-Count: 593 ; body has data/page/pageSize/totalCount/totalPages/links
+```
+
+**Part 4 — filtering + sorting** (compose filters, sort by salary):
+```bash
+curl "$BASE/api/v1/jobs?location=Cape%20Town&employmentType=FullTime&salaryMin=40000&sort=salaryMax&dir=desc&pageSize=10"
+curl "$BASE/api/v1/jobs?q=engineer&remoteOnly=true&sort=expiresAt"
+```
+
+**Part 5A — PATCH a listing** (employer token):
+```bash
+curl -i -X PATCH "$BASE/api/v1/jobs/<JOB_ID>" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"location":"Remote (South Africa)","salaryMax":120000}'
+# → 204 No Content   (inverted salary range → 400 problem+json)
+```
+
+**Part 5B — application status transition** (employer token):
+```bash
+curl -i -X PATCH "$BASE/api/v1/applications/<JOB_ID>/<APPLICANT_ID>/status" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"status":"UnderReview"}'
+# legal → 204 ; illegal (e.g. Offered→Submitted) → 400 naming both states
+```
+
+**Part 6 — versioning** (reports supported versions):
+```bash
+curl -i "$BASE/api/v1/jobs?pageSize=1"   # → api-supported-versions: 1.0
+```
+
+**Part 7 — ETag 304 round-trip**:
+```bash
+ETAG=$(curl -s -D - "$BASE/api/v1/jobs/<JOB_ID>" -o /dev/null | grep -i '^etag:' | cut -d' ' -f2- | tr -d '\r')
+curl -i "$BASE/api/v1/jobs/<JOB_ID>" -H "If-None-Match: $ETAG"   # → 304 Not Modified
+```
+
+**Part 8 — rate limit 429** (trip the search sliding window):
+```bash
+for i in $(seq 1 40); do curl -s -o /dev/null -w "%{http_code}\n" "$BASE/api/v1/jobs/search?q=engineer"; done | tail
+# → 200 … then 429 ; the 429 response body: "Rate limit exceeded. Please retry after N seconds."
+```
+
+**Extra #7 — idempotent apply** (same key twice = one application; applicant token):
+```bash
+curl -i -X POST "$BASE/api/v1/jobs/<JOB_ID>/applications" \
+  -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: abc-123" \
+  -H "Content-Type: application/json" -d '{"coverNote":"Keen!"}'   # 201, then 201 replay (no duplicate)
+```
+
+**Extra #8 — health checks**:
+```bash
+curl -i "$BASE/health/live"    # → 200 Healthy (no dependencies)
+curl -i "$BASE/health/ready"   # → 200 Healthy (Postgres reachable)
+```
