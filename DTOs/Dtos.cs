@@ -222,3 +222,14 @@ public record MyApplicationResponse(
 
 /// <summary>Body for applying to a listing — just an optional cover note.</summary>
 public record ApplyRequest(string? CoverNote);
+
+/// <summary>
+/// A single application as returned by the Part 7 single-resource GET. Identity is
+/// the composite key (JobListingId, ApplicantId) — there is no surrogate id.
+/// </summary>
+public record ApplicationResponse(
+    Guid JobListingId,
+    Guid ApplicantId,
+    string Status,
+    DateTime SubmittedAt,
+    string CoverNote);

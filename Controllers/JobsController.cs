@@ -74,6 +74,15 @@ public class JobsController(IJobService jobs) : ControllerBase
         return CreatedAtAction(nameof(GetByCompany), new { companyId }, new { id });
     }
 
+    /// <summary>PART 5A: partial update of a listing. Employer-only, same as create. One line → service.</summary>
+    [HttpPatch("{id:guid}")]
+    [Authorize(Roles = "Employer")]
+    public async Task<IActionResult> Patch(Guid id, UpdateJobListingRequest request, CancellationToken ct)
+    {
+        await jobs.PatchAsync(id, request, ct);
+        return NoContent();
+    }
+
     // ── PART 3: paged envelope helper ────────────────────────────────────────
     // Writes X-Total-Count on every paginated response and attaches the
     // HATEOAS-lite navigation links built from the current request.

@@ -52,6 +52,10 @@ public class ApplicationRepository(CareerHubDbContext db) : IApplicationReposito
             .ToListAsync(ct);
     }
 
+    public Task<Application?> GetTrackedAsync(Guid jobListingId, Guid applicantId, CancellationToken ct = default) =>
+        db.Applications.FirstOrDefaultAsync(
+            a => a.JobListingId == jobListingId && a.ApplicantId == applicantId, ct);
+
     public async Task AddAsync(Application application, CancellationToken ct = default) =>
         await db.Applications.AddAsync(application, ct);
 

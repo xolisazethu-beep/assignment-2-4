@@ -16,4 +16,7 @@ public interface IJobService
     Task<IReadOnlyList<JobListingStatsResponse>> GetApplicationStatsAsync(Guid companyId, CancellationToken ct = default);
     // companyId comes from the authenticated employer's token, never the request body.
     Task<Guid> CreateAsync(CreateJobListingRequest request, Guid companyId, CancellationToken ct = default);
+
+    /// <summary>PART 5A: partial update of a listing. Throws NotFoundException (404) / ArgumentException (400).</summary>
+    Task PatchAsync(Guid id, UpdateJobListingRequest req, CancellationToken ct = default);
 }

@@ -46,7 +46,17 @@ public interface IJobListingRepository
     /// <summary>Per-status application breakdown + rank for a company's active listings (raw SQL).</summary>
     Task<IReadOnlyList<JobListingStatsResponse>> GetApplicationStatsAsync(Guid companyId, CancellationToken ct = default);
 
-    Task<JobListing?> GetByIdAsync(Guid id, CancellationToken ct = default);
+    /// <summary>Fetch a TRACKED listing entity (for writes), or null. Used by apply + patch.</summary>
+    Task<JobListing?> GetEntityByIdAsync(Guid id, CancellationToken ct = default);
+
+    /// <summary>
+    /// PART 5A: load the tracked entity via <see cref="GetEntityByIdAsync"/> and
+    /// apply only the NON-NULL fields of <paramref name="req"/> to it. Returns the
+    /// mutated, still-tracked entity (NOT yet saved) so the service can re-validate
+    /// before committing, or null if the listing does not exist.
+    /// </summary>
+    Task<JobListing?> PatchAsync(Guid id, UpdateJobListingRequest req, CancellationToken ct = default);
+
     Task AddAsync(JobListing listing, CancellationToken ct = default);
     Task SaveChangesAsync(CancellationToken ct = default);
 }

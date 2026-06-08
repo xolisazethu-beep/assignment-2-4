@@ -757,3 +757,51 @@ DESC`**:
 sort keys are all additions on top of the required four sort keys and five filters.
 `q` reuses the Assignment 2.4 GIN-indexed `SearchVector`, so a full-text search
 still rides the index and then Bitmap-ANDs with the other filters.
+
+## Part 5 — PATCH
+
+### Part A — partial listing update
+
+`UpdateJobListingRequest` has **all-nullable** fields. `PatchAsync` lives in both
+the repository and the service:
+
+- **Repository** `PatchAsync(id, req)` fetches the **tracked** entity via
+  `GetEntityByIdAsync` and applies **only the non-null fields**, returning the
+  still-tracked entity (not yet saved).
+- **Service** `PatchAsync(id, req)` then **re-validates only what changed** and
+  commits: the salary-range check runs only if `SalaryMin` **or** `SalaryMax` was
+  supplied; the `ExpiresAt > now` check runs only if `ExpiresAt` was supplied. It
+  reuses the **same exception types** (`ArgumentException` → 400,
+  `NotFoundException` → 404) as the rest of the service.
+
+`PATCH /api/v1/jobs/{id}` carries the **same `[Authorize(Roles = "Employer")]`** as
+create, and the controller action just delegates to the service.
+
+> Stale-fingerprint note (relevant to Part 7): because PATCH can change
+> `Description` **without** touching `CreatedAt`/`SalaryMin`, the Part 7 ETag —
+> which is computed only from `Id`, `PostedAt` and `SalaryMin` — will **not** change
+> even though the content did. See Part 7 for the proper fix.
+
+### Part B — application status transitions
+
+`UpdateApplicationStatusRequest { ApplicationStatus Status }` drives
+`PATCH /api/v1/applications/{jobListingId}/{applicantId}/status` (composite key —
+the `Application` entity has no surrogate id, so the generic assignment's `{id}` is
+the key pair here). Employer-only.
+
+A `private static readonly Dictionary<ApplicationStatus, HashSet<ApplicationStatus>>`
+encodes the **legal** transitions:
+
+| From | May move to |
+|---|---|
+| `Submitted` | `UnderReview`, `Rejected` |
+| `UnderReview` | `Shortlisted`, `Rejected`, `Offered` |
+| `Shortlisted` | `Offered`, `Rejected` |
+| `Rejected` | **— (terminal)** |
+| `Offered` | **— (terminal)** |
+
+`Rejected` and `Offered` map to **empty sets**, so they can never move back to
+`Submitted` (or anywhere). An illegal transition throws `ArgumentException` → **400**
+with a message that **names the from-state and the to-state**, e.g. *"Illegal status
+transition from Offered to Submitted. Offered is a terminal state and cannot be
+changed."*

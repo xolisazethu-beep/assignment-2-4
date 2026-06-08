@@ -258,8 +258,26 @@ public class JobListingRepository(CareerHubDbContext db) : IJobListingRepository
             .ToListAsync(ct);
     }
 
-    public Task<JobListing?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
+    public Task<JobListing?> GetEntityByIdAsync(Guid id, CancellationToken ct = default) =>
         db.JobListings.FirstOrDefaultAsync(j => j.Id == id, ct);
+
+    // ── PART 5A: PATCH — apply only non-null fields to the tracked entity ─────
+    public async Task<JobListing?> PatchAsync(Guid id, UpdateJobListingRequest req, CancellationToken ct = default)
+    {
+        var listing = await GetEntityByIdAsync(id, ct);
+        if (listing is null)
+            return null;
+
+        if (req.Title is not null) listing.Title = req.Title;
+        if (req.Description is not null) listing.Description = req.Description;
+        if (req.Location is not null) listing.Location = req.Location;
+        if (req.EmploymentType is not null) listing.Type = req.EmploymentType.Value;
+        if (req.SalaryMin is not null) listing.SalaryMin = req.SalaryMin;
+        if (req.SalaryMax is not null) listing.SalaryMax = req.SalaryMax;
+        if (req.ExpiresAt is not null) listing.ExpiresAt = req.ExpiresAt.Value;
+
+        return listing; // still tracked; the service validates then SaveChangesAsync
+    }
 
     public async Task AddAsync(JobListing listing, CancellationToken ct = default) =>
         await db.JobListings.AddAsync(listing, ct);

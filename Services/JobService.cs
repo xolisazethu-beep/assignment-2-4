@@ -1,4 +1,5 @@
 using CareerHub.Api.DTOs;
+using CareerHub.Api.Exceptions;
 using CareerHub.Api.Models;
 using CareerHub.Api.Repositories;
 
@@ -65,5 +66,30 @@ public class JobService(IJobListingRepository jobs) : IJobService
         await jobs.AddAsync(listing, ct);
         await jobs.SaveChangesAsync(ct);
         return listing.Id;
+    }
+
+    // ── PART 5A: PATCH ───────────────────────────────────────────────────────
+    // The repository fetches the tracked entity and applies the non-null fields;
+    // here we re-run the SAME validation rules as CreateAsync, but ONLY for the
+    // fields the request actually touched, then commit.
+    public async Task PatchAsync(Guid id, UpdateJobListingRequest req, CancellationToken ct = default)
+    {
+        var listing = await jobs.PatchAsync(id, req, ct)
+            ?? throw new NotFoundException("That job listing does not exist.");
+
+        // Re-run the salary-range check only if either salary field was provided.
+        if (req.SalaryMin is not null || req.SalaryMax is not null)
+        {
+            if (listing.SalaryMin is <= 0)
+                throw new ArgumentException("SalaryMin must be greater than zero.");
+            if (listing.SalaryMin is not null && listing.SalaryMax is not null && listing.SalaryMax <= listing.SalaryMin)
+                throw new ArgumentException("SalaryMax must be greater than SalaryMin.");
+        }
+
+        // Re-run the expiry check only if ExpiresAt was provided.
+        if (req.ExpiresAt is not null && listing.ExpiresAt <= DateTime.UtcNow)
+            throw new ArgumentException("ExpiresAt must be in the future.");
+
+        await jobs.SaveChangesAsync(ct);
     }
 }

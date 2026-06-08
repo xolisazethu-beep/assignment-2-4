@@ -14,6 +14,13 @@ public interface IApplicationRepository
     /// <summary>One applicant's own applications + listing/company info ("track applications").</summary>
     Task<IReadOnlyList<MyApplicationResponse>> GetByApplicantAsync(Guid applicantId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Fetch a single TRACKED application by its composite key (JobListingId,
+    /// ApplicantId), or null. Backs the Part 5B status transition and the Part 7
+    /// single-resource GET.
+    /// </summary>
+    Task<Application?> GetTrackedAsync(Guid jobListingId, Guid applicantId, CancellationToken ct = default);
+
     Task AddAsync(Application application, CancellationToken ct = default);
     Task SaveChangesAsync(CancellationToken ct = default);
 }

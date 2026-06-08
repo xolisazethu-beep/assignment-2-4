@@ -17,7 +17,7 @@ public class ApplicationService(
 {
     public async Task ApplyAsync(Guid applicantId, Guid jobListingId, string? coverNote, CancellationToken ct = default)
     {
-        var listing = await jobs.GetByIdAsync(jobListingId, ct);
+        var listing = await jobs.GetEntityByIdAsync(jobListingId, ct);
         if (listing is null)
             throw new NotFoundException("That job listing does not exist.");
         if (listing.Status != ListingStatus.Active || listing.ExpiresAt <= DateTime.UtcNow)
@@ -39,4 +39,41 @@ public class ApplicationService(
 
     public Task<IReadOnlyList<MyApplicationResponse>> GetMineAsync(Guid applicantId, CancellationToken ct = default) =>
         applications.GetByApplicantAsync(applicantId, ct);
+
+    public async Task<ApplicationResponse?> GetAsync(Guid jobListingId, Guid applicantId, CancellationToken ct = default)
+    {
+        var app = await applications.GetTrackedAsync(jobListingId, applicantId, ct);
+        return app is null
+            ? null
+            : new ApplicationResponse(app.JobListingId, app.ApplicantId, app.Status.ToString(), app.SubmittedAt, app.CoverNote);
+    }
+
+    // ── PART 5B: LEGAL STATUS-TRANSITION STATE MACHINE ───────────────────────
+    // Rejected and Offered are TERMINAL (empty sets → no move out, so they can
+    // never go back to Submitted). Submitted → UnderReview/Rejected. UnderReview →
+    // Shortlisted/Rejected/Offered. Shortlisted → Offered/Rejected.
+    private static readonly Dictionary<ApplicationStatus, HashSet<ApplicationStatus>> LegalTransitions = new()
+    {
+        [ApplicationStatus.Submitted]   = [ApplicationStatus.UnderReview, ApplicationStatus.Rejected],
+        [ApplicationStatus.UnderReview] = [ApplicationStatus.Shortlisted, ApplicationStatus.Rejected, ApplicationStatus.Offered],
+        [ApplicationStatus.Shortlisted] = [ApplicationStatus.Offered, ApplicationStatus.Rejected],
+        [ApplicationStatus.Rejected]    = [],
+        [ApplicationStatus.Offered]     = [],
+    };
+
+    public async Task UpdateStatusAsync(Guid jobListingId, Guid applicantId, ApplicationStatus newStatus, CancellationToken ct = default)
+    {
+        var app = await applications.GetTrackedAsync(jobListingId, applicantId, ct)
+            ?? throw new NotFoundException("That application does not exist.");
+
+        if (!LegalTransitions.TryGetValue(app.Status, out var allowed) || !allowed.Contains(newStatus))
+            throw new ArgumentException(
+                $"Illegal status transition from {app.Status} to {newStatus}. " +
+                (allowed is { Count: > 0 }
+                    ? $"From {app.Status} you may only move to: {string.Join(", ", allowed)}."
+                    : $"{app.Status} is a terminal state and cannot be changed."));
+
+        app.Status = newStatus;
+        await applications.SaveChangesAsync(ct);
+    }
 }
